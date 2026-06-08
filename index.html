@@ -291,7 +291,8 @@
             <h3 class="font-semibold mb-3">匯出資料</h3>
             <p class="text-sm text-white/80 mb-3">下載目前的學生、任務與分配結果</p>
             <div class="flex flex-wrap gap-3">
-              <button id="btnDownloadCSV" class="px-4 py-2 rounded-xl bg-white text-brand-800 font-semibold shadow">下載 CSV</button>
+              <button id="btnDownloadExcel" class="px-4 py-2 rounded-xl bg-white text-brand-800 font-semibold shadow">下載 Excel</button>
+              <button id="btnDownloadPDF" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-brand-900 font-extrabold shadow">下載 PDF</button>
               <button id="btnDownloadJSON" class="px-4 py-2 rounded-xl bg-white/90 hover:bg-white text-brand-800 font-semibold shadow">下載 JSON</button>
             </div>
           </div>
@@ -1082,7 +1083,7 @@
     }
 
     // 匯出
-    function toCSV() {
+    function exportRows() {
       const rows = [['類型','任務','學號','姓名']];
       const map = [['officer','幹部'], ['tutor','小老師']];
       map.forEach(([key, label]) => {
@@ -1091,7 +1092,7 @@
           rows.push([label, t.name, s?.no || '', s?.name || '']);
         });
       });
-      return rows.map(r => r.map(x => `"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+      return rows;
     }
 
     function download(filename, content, type='text/plain') {
@@ -1106,9 +1107,80 @@
       a.remove();
     }
 
-    $('#btnDownloadCSV').addEventListener('click', () => {
-      const csv = toCSV();
-      download('班級幹部_小老師_分配.csv', csv, 'text/csv;charset=utf-8;');
+    function downloadExcel() {
+      if (!window.XLSX) return toast('Excel 匯出套件尚未載入，請確認網路連線後再試');
+      const workbook = XLSX.utils.book_new();
+      const assignmentSheet = XLSX.utils.aoa_to_sheet(exportRows());
+      const studentsSheet = XLSX.utils.aoa_to_sheet([
+        ['序號', '學號/座號', '姓名'],
+        ...state.students.map((student, index) => [index + 1, student.no || '', student.name])
+      ]);
+      assignmentSheet['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 16 }];
+      studentsSheet['!cols'] = [{ wch: 8 }, { wch: 12 }, { wch: 16 }];
+      XLSX.utils.book_append_sheet(workbook, assignmentSheet, '分配結果');
+      XLSX.utils.book_append_sheet(workbook, studentsSheet, '學生名單');
+      XLSX.writeFile(workbook, '班級幹部_小老師_分配.xlsx');
+      toast('已下載 Excel 檔');
+    }
+
+    function escapeHTML(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function downloadPDF() {
+      const rows = exportRows();
+      const bodyRows = rows.slice(1).map(row => `
+        <tr>${row.map(cell => `<td>${escapeHTML(cell || '-')}</td>`).join('')}</tr>
+      `).join('');
+      const html = `<!DOCTYPE html>
+        <html lang="zh-Hant">
+        <head>
+          <meta charset="UTF-8">
+          <title>班級幹部與小老師分配結果</title>
+          <style>
+            @page { size: A4; margin: 16mm; }
+            body { font-family: "Noto Sans TC", "Microsoft JhengHei", Arial, sans-serif; color: #111827; }
+            h1 { font-size: 22px; margin: 0 0 12px; }
+            .meta { margin: 0 0 16px; color: #4b5563; font-size: 13px; }
+            table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+            th { background: #e0f2fe; font-weight: 700; }
+            tr:nth-child(even) td { background: #f8fafc; }
+          </style>
+        </head>
+        <body>
+          <h1>班級幹部與小老師分配結果</h1>
+          <p class="meta">匯出時間：${escapeHTML(new Date().toLocaleString('zh-TW'))}</p>
+          <table>
+            <thead><tr>${rows[0].map(cell => `<th>${escapeHTML(cell)}</th>`).join('')}</tr></thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+          <script>
+            window.addEventListener('load', () => {
+              window.print();
+            });
+          <\/script>
+        </body>
+        </html>`;
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) return toast('瀏覽器封鎖了 PDF 視窗，請允許彈出視窗後再試');
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      toast('已開啟 PDF 列印視窗');
+    }
+
+    $('#btnDownloadExcel').addEventListener('click', () => {
+      downloadExcel();
+    });
+
+    $('#btnDownloadPDF').addEventListener('click', () => {
+      downloadPDF();
     });
 
     $('#btnDownloadJSON').addEventListener('click', () => {
