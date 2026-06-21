@@ -126,7 +126,7 @@
             <p class="text-sm text-white/80 mb-2">支援 .xlsx、.xls、.csv。若檔案內有多個班級，會先產生班級選單，老師選定班級後再匯入。</p>
             <input id="studentExcelFile" type="file" accept=".xlsx,.xls,.csv" class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:font-semibold file:bg-amber-300 file:text-brand-900 hover:file:bg-amber-200 file:cursor-pointer cursor-pointer bg-white/90 text-brand-900 rounded-lg">
             <div class="mt-3 grid gap-3">
-              <button id="btnScanStudentClasses" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-brand-900 font-extrabold shadow">讀取班級清單</button>
+              <button id="btnScanStudentClasses" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">讀取班級清單</button>
               <label class="block">
                 <span class="text-sm text-white/80">選擇班級</span>
                 <select id="studentClassSelect" class="mt-1 w-full rounded-lg bg-white text-brand-900 px-3 py-2 outline-none ring-2 ring-transparent focus:ring-emerald-300" disabled>
@@ -179,7 +179,7 @@
           <div class="flex flex-wrap gap-3">
             <button id="btnGenerateOfficerTasks" class="px-4 py-2 rounded-xl bg-white text-brand-800 font-semibold shadow">生成常用幹部</button>
             <button id="btnGenerateTutorTasks" class="px-4 py-2 rounded-xl bg-white/90 hover:bg-white text-brand-800 font-semibold shadow">生成常用小老師</button>
-            <button id="btnGenerateAllTasks" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-brand-900 font-extrabold shadow">生成全部職務</button>
+            <button id="btnGenerateAllTasks" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">生成全部職務</button>
           </div>
         </div>
 
@@ -244,7 +244,7 @@
             <label for="avoidDuplicate" class="text-sm">同一類型避免重複指派同一人</label>
           </div>
           <div class="flex gap-3">
-            <button id="btnRandomAssign" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-brand-900 font-extrabold shadow">隨機分配未指派</button>
+            <button id="btnRandomAssign" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">隨機分配未指派</button>
             <button id="btnClearAssign" class="px-4 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white font-semibold">清除此類全部指派</button>
           </div>
         </div>
@@ -274,6 +274,7 @@
                 <th class="px-4 py-3">任務</th>
                 <th class="px-4 py-3">指派給</th>
                 <th class="px-4 py-3">快速指定</th>
+                <th class="px-4 py-3">隨機分配</th>
               </tr>
             </thead>
             <tbody id="assignTable" class="divide-y divide-white/10"></tbody>
@@ -293,7 +294,7 @@
             <p class="text-sm text-white/80 mb-3">下載目前的學生、任務與分配結果</p>
             <div class="flex flex-wrap gap-3">
               <button id="btnDownloadExcel" class="px-4 py-2 rounded-xl bg-white text-brand-800 font-semibold shadow">下載 Excel</button>
-              <button id="btnDownloadPDF" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-brand-900 font-extrabold shadow">下載 PDF</button>
+              <button id="btnDownloadPDF" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">下載 PDF</button>
               <button id="btnDownloadJSON" class="px-4 py-2 rounded-xl bg-white/90 hover:bg-white text-brand-800 font-semibold shadow">下載 JSON</button>
             </div>
           </div>
@@ -1012,6 +1013,9 @@
               <button data-id="${t.id}" class="btn-clear-one px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30">清除</button>
             </div>
           </td>
+          <td class="px-4 py-3">
+            <button data-id="${t.id}" class="btn-random-one px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">隨機</button>
+          </td>
         `;
         tbody.appendChild(tr);
       });
@@ -1049,6 +1053,43 @@
           }
         });
       });
+
+      // 單筆隨機分配
+      $$('.btn-random-one').forEach(btn => {
+        btn.addEventListener('click', () => randomAssignOne(role, btn.dataset.id));
+      });
+    }
+
+    function randomAssignOne(role, taskId) {
+      if (state.students.length === 0) return toast('請先加入學生名單');
+
+      const tasks = state.tasks[role];
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+
+      const avoidDup = $('#avoidDuplicate').checked;
+      let pool = state.students.map(s => s.id);
+
+      if (avoidDup) {
+        const usedByOtherTasks = new Set(
+          tasks
+            .filter(t => t.id !== taskId && t.studentId)
+            .map(t => t.studentId)
+        );
+        pool = pool.filter(id => !usedByOtherTasks.has(id));
+      }
+
+      if (task.studentId && pool.length > 1) {
+        pool = pool.filter(id => id !== task.studentId);
+      }
+
+      if (pool.length === 0) return toast('目前沒有可隨機分配的學生');
+
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      task.studentId = pick;
+      refreshAssignUI();
+      saveLocal();
+      toast('已重新隨機分配此項任務');
     }
 
     function randomAssign(role) {
@@ -1264,5 +1305,5 @@
     refreshTasksUI();
     refreshAssignUI();
   </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'96bfcc7a02764a48',t:'MTc1NDY2NDM0MC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
