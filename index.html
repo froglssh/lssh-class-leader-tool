@@ -241,7 +241,7 @@
           </div>
           <div class="flex items-center gap-2">
             <input id="avoidDuplicate" type="checkbox" class="w-4 h-4 rounded" checked>
-            <label for="avoidDuplicate" class="text-sm">同一類型避免重複指派同一人</label>
+            <label for="avoidDuplicate" class="text-sm">隨機時優先分配未有工作學生（避免隨機重複；手動挑選不限）</label>
           </div>
           <div class="flex gap-3">
             <button id="btnRandomAssign" class="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white font-extrabold shadow">隨機分配未指派</button>
@@ -986,6 +986,25 @@
       toast('已清除指派');
     });
 
+    // 取得學生在所有任務（幹部 + 小老師）中被指派的職務名稱
+    function getStudentAssignedTaskNames(studentId, excludeTaskId = null) {
+      if (!studentId) return [];
+      const roles = [];
+      ['officer', 'tutor'].forEach(r => {
+        state.tasks[r].forEach(t => {
+          if (t.studentId === studentId && t.id !== excludeTaskId) {
+            roles.push(t.name);
+          }
+        });
+      });
+      return roles;
+    }
+
+    // 計算學生在所有任務（幹部 + 小老師）中的指派次數
+    function getStudentTaskCount(studentId, excludeTaskId = null) {
+      return getStudentAssignedTaskNames(studentId, excludeTaskId).length;
+    }
+
     function refreshAssignUI() {
       const role = $('#assignRole').value;
       const tbody = $('#assignTable');
@@ -1001,7 +1020,11 @@
         const assigned = state.students.find(s => s.id === t.studentId);
         const options = [
           `<option value="">未指派</option>`,
-          ...state.students.map(s => `<option value="${s.id}" ${s.id===t.studentId?'selected':''}>${s.no ? s.no + ' - ' : ''}${s.name}</option>`)
+          ...state.students.map(s => {
+            const otherTasks = getStudentAssignedTaskNames(s.id, t.id);
+            const badge = otherTasks.length ? ` (已兼任：${otherTasks.join('、')})` : '';
+            return `<option value="${s.id}" ${s.id===t.studentId?'selected':''}>${s.no ? s.no + ' - ' : ''}${s.name}${badge}</option>`;
+          })
         ].join('');
         tr.innerHTML = `
           <td class="px-4 py-3">${idx + 1}</td>
@@ -1020,24 +1043,27 @@
         tbody.appendChild(tr);
       });
 
-      // 快速指定
+      // 快速指定（允許手動挑選相同學生在不同職位）
       $$('.assign-select').forEach(sel => {
         sel.addEventListener('change', () => {
           const id = sel.dataset.id;
           const val = sel.value;
           const task = state.tasks[role].find(x => x.id === id);
           if (!task) return;
-          // 避免同類重複
-          if ($('#avoidDuplicate').checked && val) {
-            const existsTask = state.tasks[role].find(x => x.studentId === val && x.id !== id);
-            if (existsTask) {
-              sel.value = task.studentId || '';
-              return toast('同一類型已被其他任務使用，請先清除或關閉「避免重複」');
-            }
-          }
           task.studentId = val || null;
           refreshAssignUI();
           saveLocal();
+          if (val) {
+            const student = state.students.find(s => s.id === val);
+            const roles = getStudentAssignedTaskNames(val);
+            if (roles.length > 1) {
+              toast(`已手動指派 ${student?.name || ''}（目前兼任：${roles.join('、')}）`);
+            } else {
+              toast(`已指派 ${student?.name || ''}`);
+            }
+          } else {
+            toast('已清除此職務指派');
+          }
         });
       });
 
@@ -1054,7 +1080,7 @@
         });
       });
 
-      // 單筆隨機分配
+      // 單筆隨機分配（優先分配未有工作學生）
       $$('.btn-random-one').forEach(btn => {
         btn.addEventListener('click', () => randomAssignOne(role, btn.dataset.id));
       });
@@ -1071,16 +1097,26 @@
       let pool = state.students.map(s => s.id);
 
       if (avoidDup) {
+        // 同一類型內，若人數充足，優先排除本類型其他任務已使用的學生
         const usedByOtherTasks = new Set(
           tasks
             .filter(t => t.id !== taskId && t.studentId)
             .map(t => t.studentId)
         );
-        pool = pool.filter(id => !usedByOtherTasks.has(id));
+        const unusedInRole = pool.filter(id => !usedByOtherTasks.has(id));
+        if (unusedInRole.length > 0) {
+          pool = unusedInRole;
+        }
+
+        // 核心演算法：優先選取還未有工作的學生（所有任務中已指派次數最少者）
+        const minJobs = Math.min(...pool.map(id => getStudentTaskCount(id, taskId)));
+        pool = pool.filter(id => getStudentTaskCount(id, taskId) === minJobs);
       }
 
+      // 若候選人充足，避免隨機再次抽到原指派者
       if (task.studentId && pool.length > 1) {
-        pool = pool.filter(id => id !== task.studentId);
+        const withoutCurrent = pool.filter(id => id !== task.studentId);
+        if (withoutCurrent.length > 0) pool = withoutCurrent;
       }
 
       if (pool.length === 0) return toast('目前沒有可隨機分配的學生');
@@ -1089,7 +1125,9 @@
       task.studentId = pick;
       refreshAssignUI();
       saveLocal();
-      toast('已重新隨機分配此項任務');
+      const student = state.students.find(s => s.id === pick);
+      const jobsCount = getStudentTaskCount(pick, taskId);
+      toast(`已隨機分配「${task.name}」給 ${student?.name || '學生'}${jobsCount > 0 ? `（兼任 ${jobsCount + 1} 項職務）` : ''}`);
     }
 
     function randomAssign(role) {
@@ -1100,28 +1138,49 @@
 
       const avoidDup = $('#avoidDuplicate').checked;
 
-      // 目前已使用的人（同類型）
-      const used = new Set(tasks.filter(t => t.studentId).map(t => t.studentId));
-      const poolBase = [...state.students];
+      // 全域動態追蹤每位學生目前的總工作數（幹部 + 小老師）
+      const jobCounts = new Map();
+      state.students.forEach(s => {
+        jobCounts.set(s.id, getStudentTaskCount(s.id));
+      });
 
-      // 隨機分配每個未指派任務
-      for (let t of need) {
-        let pool = poolBase.map(s => s.id);
+      // 目前此類型已使用的學生集合
+      const usedInRole = new Set(tasks.filter(t => t.studentId).map(t => t.studentId));
+
+      let assignedCount = 0;
+
+      // 隨機打散待分配任務順序，避免固定順序產生的偏誤
+      const shuffledNeed = [...need].sort(() => Math.random() - 0.5);
+
+      for (let t of shuffledNeed) {
+        let candidates = state.students.map(s => s.id);
+
         if (avoidDup) {
-          pool = pool.filter(id => !used.has(id));
+          // 優先挑選本類型尚未指派的學生
+          const notUsedInThisRole = candidates.filter(id => !usedInRole.has(id));
+          if (notUsedInThisRole.length > 0) {
+            candidates = notUsedInThisRole;
+          }
+          // 在候選人中，挑選目前全域工作數最少（尚未有工作者優先）的學生群組
+          const minJobs = Math.min(...candidates.map(id => jobCounts.get(id) || 0));
+          candidates = candidates.filter(id => (jobCounts.get(id) || 0) === minJobs);
         }
-        if (pool.length === 0) {
-          // 若不夠分，跳過或提示
+
+        if (candidates.length === 0) {
           toast('可用人數不足，部分任務未分配');
           break;
         }
-        const pick = pool[Math.floor(Math.random() * pool.length)];
+
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
         t.studentId = pick;
-        used.add(pick);
+        usedInRole.add(pick);
+        jobCounts.set(pick, (jobCounts.get(pick) || 0) + 1);
+        assignedCount++;
       }
+
       refreshAssignUI();
       saveLocal();
-      toast('已完成隨機分配');
+      toast(`已完成隨機分配（共指派 ${assignedCount} 個任務）`);
     }
 
     // 匯出
